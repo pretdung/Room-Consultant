@@ -1,20 +1,35 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Suspense } from 'react';
 import Room3D from './components/Room3D';
 import Sidebar from './components/Sidebar';
-import { RoomConfig, RoomSide, SideState, RoomItem } from './types';
-import { INITIAL_ROOM_CONFIG, SIDE_LABELS, ARCHITECTURAL_CATALOG } from './constants';
+import { RoomConfig, RoomSide, SideState, RoomItem, RoomDimensions } from './types';
+import { INITIAL_ROOM_CONFIG, SIDE_LABELS, ARCHITECTURAL_CATALOG, DEFAULT_DIMENSIONS } from './constants';
 import { generateAIInteriorSuggestion } from './services/geminiService';
 
 const App: React.FC = () => {
+  const [dimensions, setDimensions] = useState<RoomDimensions>(DEFAULT_DIMENSIONS);
   const [config, setConfig] = useState<RoomConfig>(INITIAL_ROOM_CONFIG);
   const [items, setItems] = useState<RoomItem[]>([]);
   const [selectedSide, setSelectedSide] = useState<RoomSide>('wall_north');
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [notification, setNotification] = useState<{message: string, type: 'info' | 'error'} | null>(null);
+
+  // Automatically update stair heights when room height changes
+  useEffect(() => {
+    setItems(prev => prev.map(item => {
+      if (item.type === 'stairs') {
+        return { 
+          ...item, 
+          height: dimensions.height,
+          y: 0 // For full-height stairs, center is 0 in a [-height/2, height/2] space
+        };
+      }
+      return item;
+    }));
+  }, [dimensions.height]);
 
   const updateSideConfig = useCallback((side: RoomSide, updates: Partial<SideState>) => {
     setConfig(prev => ({
@@ -23,29 +38,36 @@ const App: React.FC = () => {
     }));
   }, []);
 
-  const handleAddItem = useCallback((type: 'door' | 'window', presetId: string) => {
+  const handleAddItem = useCallback((type: 'door' | 'window' | 'stairs', presetId: string) => {
     if (!selectedSide.startsWith('wall_')) return;
     
     // Find matching preset in catalog
-    const catalogGroup = type === 'door' ? ARCHITECTURAL_CATALOG.door : ARCHITECTURAL_CATALOG.window;
+    const catalogGroup = type === 'door' 
+      ? ARCHITECTURAL_CATALOG.door 
+      : type === 'window' 
+        ? ARCHITECTURAL_CATALOG.window 
+        : ARCHITECTURAL_CATALOG.stairs;
+        
     const preset = catalogGroup.find(p => p.id === presetId);
     if (!preset) return;
 
-    const wallHeight = 6;
+    const wallHeight = dimensions.height;
+    const itemHeight = type === 'stairs' ? wallHeight : (preset as any).height || wallHeight;
+    
     const newItem: RoomItem = {
       id: Math.random().toString(36).substr(2, 9),
       type,
       wall: selectedSide,
       x: 0,
-      y: type === 'door' ? -wallHeight / 2 + preset.height / 2 : 0, 
+      y: (type === 'door' || type === 'stairs') ? -wallHeight / 2 + itemHeight / 2 : 0, 
       width: preset.width,
-      height: preset.height,
-      color: preset.color,
+      height: itemHeight,
+      color: (preset as any).color || '#ffffff',
     };
     
     setItems(prev => [...prev, newItem]);
     setSelectedItemId(newItem.id);
-  }, [selectedSide]);
+  }, [selectedSide, dimensions.height]);
 
   const handleRemoveItem = useCallback((id: string) => {
     setItems(prev => prev.filter(i => i.id !== id));
@@ -99,6 +121,7 @@ const App: React.FC = () => {
         }>
           <Canvas shadows dpr={[1, 2]} className="cursor-grab active:cursor-grabbing">
             <Room3D 
+              dimensions={dimensions}
               config={config} 
               items={items}
               selectedSide={selectedSide} 
@@ -138,6 +161,8 @@ const App: React.FC = () => {
       </main>
 
       <Sidebar 
+        dimensions={dimensions}
+        setDimensions={setDimensions}
         selectedSide={selectedSide}
         setSelectedSide={setSelectedSide}
         config={config}
